@@ -1,0 +1,316 @@
+---
+title: "survival model"
+author: "Pei Tian, Mengxiao Luan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup}
+library(tidyverse)
+library(survival)
+library(survminer)
+library(modelr)
+library(RColorBrewer)
+
+knitr::opts_chunk$set(message = F, warning = F)
+
+theme_set(
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(family = "Helvetica")
+  )
+)
+```
+
+## Preprocessing
+```{r data}
+data = 
+  read_csv(
+    "data/Project_2_data.csv") |>
+  janitor::clean_names() |>
+  mutate(status = case_match(status, "Alive" ~ 0, "Dead" ~ 1),
+         grade = case_match(grade, "1" ~ 1, "2" ~ 2, "3" ~ 3,
+                            "anaplastic; Grade IV" ~ 4),
+         grade = as.factor(grade)) |>
+  mutate_if(is.character, as.factor) 
+
+sum(is.na(data))
+
+data_fit = 
+  data |> 
+  mutate(log_tumor_size = log1p(tumor_size)) |> 
+  select(-tumor_size) |> 
+  select(-c(survival_months, status)) 
+
+surv = Surv(data$survival_months, data$status)
+summary(surv)
+```
+
+## KM 
+### plot
+
+```{r km_loop}
+# overall K-M
+kmfit = survfit(surv ~ 1)
+summary(kmfit)
+ggsurvplot(fit = kmfit, data = data,
+             conf.int = F, title = "K-M plot", 
+             ylab = "Survival Probability", xlab = "Months", 
+             palette = "#2903e8", legend.title = "")
+
+# categorical
+data_cat = 
+  data |>
+  select(-c(survival_months, status)) |>
+  select(-c(age, regional_node_examined, reginol_node_positive, tumor_size))
+
+cat_terms = 
+  data_cat |>
+  colnames()
+
+for(i in 1:10){
+  f = formula(paste0("surv ~ ", cat_terms[i]))
+  km_fit = do.call(survfit, args = list(formula = f, data = data_cat))
+  title = paste("K-M plot versus", cat_terms[i])
+  legend = 
+    unique(data_cat |> select(cat_terms[i])) |> 
+    unlist() |> 
+    as.vector() |>
+    sort()
+  km_plot = ggsurvplot(fit = km_fit, data = data_cat,
+             conf.int = F, title = title, 
+             ylab = "Survival Probability", xlab = "Months", 
+             legend.labs = legend,
+             pval = T, risk.table = T, legend.title = cat_terms[i])
+  print(km_plot)
+}
+```
+
+### log-rank test
+```{r}
+for(i in cat_terms){
+  test_result = survdiff(formula(paste0("surv ~ ", i)), data = data_cat)
+  print(paste(i, test_result$pvalue))
+}
+# All significant
+
+# print results as table
+logrank = c()
+for(i in cat_terms){
+     test_result = survdiff(formula(paste0("surv ~ ", i)), data = data_cat)
+     logrank[i] = test_result$pvalue
+}
+result = 
+  as.data.frame(logrank) |>
+  mutate(p = logrank) |> 
+  select(-logrank)
+result |> 
+  knitr::kable() |> 
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Interaction
+1.filter interaction term
+```{r interaction}
+combination = function(vec){  
+  result = tibble()  
+  for(i in 1:(length(vec)-1)){    
+    x = vec[i]    
+    for(j in (i+1):length(vec)){      
+      y = vec[j]      
+      result = rbind(result, tibble(x = x, y = y))    
+      }  
+    }  
+  return(result)
+}
+full_model = data_fit |>  
+  select(-c(n_stage, t_stage, grade, progesterone_status, # 0.4            
+            a_stage, reginol_node_positive)) |>  
+  coxph(surv ~ ., data = _)
+
+interaction_terms = data_fit |> 
+  select(-c(n_stage, t_stage, grade, progesterone_status, # 0.4
+            a_stage, reginol_node_positive)) |>  
+  colnames() |>  
+  combination()
+terms = c()
+for(i in 1:dim(interaction_terms)[1]){  
+  term = paste(interaction_terms[i, 1], interaction_terms[i, 2], sep = " * ")  
+  f = formula(paste0("surv ~ . +", term))  
+  interact_model = data_fit |>     
+    select(-c(n_stage, t_stage, grade, progesterone_status, # 0.4           
+              a_stage, reginol_node_positive)) |>    
+    coxph(f, data = _)  
+  r = anova(full_model, interact_model)[["Pr(>|Chi|)"]][2]  
+  if(r < 0.05){    
+    print(concordance(interact_model)$concordance)    
+    print(paste(term, r))    
+    terms = append(terms, term)  
+  }
+}
+```
+
+2. model with interaction term
+```{r interaction-model}
+f = formula(paste0("surv ~ . + ", paste(terms, collapse = " + ")))
+model_interaction = data_fit |>     
+  select(-c(n_stage, t_stage, grade, progesterone_status, # 0.4 
+            a_stage, reginol_node_positive)) |>    
+  coxph(surv ~ . + log_tumor_size * estrogen_status + age * differentiate, data = _) 
+summary(model_interaction)
+# Method: stepwise
+# interaction term significant + not absorb other terms's significance => add interaction term
+# @log_tumor_size * estrogen_status: tumor_size -> significant
+# race * marital_status: absorb race
+# age * estrogen_status: absorb age
+# age * log_tumor_size: non-significant
+# @age * differentiate: significant 
+# x6th_stage * regional_node_examined: non-significant
+```
+                                                                                
+### Redeem with time-varing effect
+```{r toy-plot}
+data_slc = data_fit |>     
+  select(-c(n_stage, t_stage, grade, progesterone_status, # 0.4            
+            a_stage, reginol_node_positive)) 
+model = coxph(surv ~ . + log_tumor_size * estrogen_status + age * differentiate, data = data_slc)
+
+summary(model)
+ph.test = cox.zph(model)
+ggcoxzph(ph.test, point.alpha = .3) 
+# autoplot(survfit(model))
+
+# tt version
+# --------- FINAL MODEL ---------- #
+final_model = coxph(surv ~ . + tt(estrogen_status) + log_tumor_size * estrogen_status + log_tumor_size * estrogen_status + age * differentiate, data = data_slc)
+# TIPS: omit log_tumor_size * tt(estrogen_status): not significant
+summary(model)
+```
+
+## Diagnostic
+
+```{r}
+# full model with all variables and no interactions
+cox.zph(coxph(surv ~ ., data = data_fit))
+test.ph = cox.zph(coxph(surv ~ ., data = data_fit))
+test.ph
+ggcoxzph(test.ph, point.alpha = .3)
+# significant: a_stage, estrogen_status, progesterone_status
+
+# full model using 0.4 corrlelation
+test.ph = cox.zph(coxph(surv ~ ., data = data_slc))
+test.ph
+ggcoxzph(test.ph, point.alpha = .3)
+# significant: estrogen_status
+
+# full model using 0.4 corrlelation and interactions
+test.ph = cox.zph(coxph(surv ~ . + log_tumor_size * estrogen_status + age * differentiate, data = data_slc))
+test.ph
+ggcoxzph(test.ph, point.alpha = .3)
+#significant: estrogen_status, estrogen_status:log_tumor_size
+
+# Residuals vs continuous predictor
+par(mfrow = c(3,1))
+
+X <- data_fit$age
+Y <- resid(coxph(surv ~ ., data = data_slc), type = "martingale")
+plot(X, Y, pch = 20, col = "darkgray",
+     xlab = "Age", ylab = "Martingale residual",
+     main = "Martingale residuals versus predictor(age)")
+abline(h = 0)
+lines(smooth.spline(X, Y, df = 7), lty = 2, lwd = 2)
+
+X <- data_fit$log_tumor_size
+Y <- resid(coxph(surv ~ ., data = data_slc), type = "martingale")
+plot(X, Y, pch = 20, col = "darkgray",
+     xlab = "log(tumor size)", ylab = "Martingale residual",
+     main = "Martingale residuals versus predictor(log(tumor size))")
+abline(h = 0)
+lines(smooth.spline(X, Y, df = 7), lty = 2, lwd = 2)
+
+X <- data_fit$regional_node_examined
+Y <- resid(coxph(surv ~ ., data = data_slc), type = "martingale")
+plot(X, Y, pch = 20, col = "darkgray",
+     xlab = "Regional_node_examined", ylab = "Martingale residual",
+     main = "Martingale residuals versus predictor(regional node examined)")
+abline(h = 0)
+lines(smooth.spline(X, Y, df = 7), lty = 2, lwd = 2)
+```
+
+## Validation
+```{r brier-cv}
+data = 
+  read_csv(
+    "data/Project_2_data.csv") |>
+  janitor::clean_names() |>
+  mutate(status = case_match(status, "Alive" ~ 0, "Dead" ~ 1),
+         grade = case_match(grade, "1" ~ 1, "2" ~ 2, "3" ~ 3,
+                            "anaplastic; Grade IV" ~ 4),
+         grade = as.factor(grade)) |>
+  mutate_if(is.character, as.factor) |>  
+  mutate(log_tumor_size = log1p(tumor_size)) |> 
+  select(-tumor_size)
+  
+cv_data = modelr::crossv_kfold(data, k = 10) |> 
+  mutate(train = map(train, as_tibble), 
+         test = map(test, as_tibble))
+
+# calculate mean brier score
+score = tibble()
+for(i in 1:dim(cv_data)[1]){
+  train_data = cv_data |> pull(train) |> nth(i) |> as_tibble()
+  test_data = cv_data |> pull(test) |> nth(i) |> as_tibble()
+  model = coxph(Surv(survival_months, status) ~ age + race + marital_status + x6th_stage + differentiate + estrogen_status + regional_node_examined + log_tumor_size + log_tumor_size * estrogen_status + age * differentiate, data = train_data)
+  result = brier(model, times = pull(test_data, survival_months))
+  score = rbind(
+    score,
+    tibble(
+      batch = i, 
+      brier = result$brier
+    )
+  )
+}
+score |> 
+  group_by(batch) |>
+  summarise(
+    count = n()
+  )
+
+colormap = colorRampPalette(brewer.pal(10, "Set3"))(10)
+score |> 
+  mutate(batch = factor(batch)) |>
+  ggplot(aes(y = brier, fill = batch)) +
+  geom_boxplot() +
+  labs(title = "Brier score for cross validation") +
+  scale_fill_manual(values = colormap 
+)
+```
+
+```{r race-comparison}
+model = coxph(Surv(survival_months, status) ~ age + race + marital_status + x6th_stage + differentiate + estrogen_status + regional_node_examined + log_tumor_size + log_tumor_size * estrogen_status + age * differentiate, data = data)
+
+white = brier(model, newdata = data |> filter(race == "White"))$brier
+black = brier(model, newdata = data |> filter(race == "Black"))$brier
+other = brier(model, newdata = data |> filter(race == "Other"))$brier
+
+rbind(
+  tibble(
+    race = "white", 
+    brier = white
+  ), 
+  tibble(
+    race = "black", 
+    brier = black
+  ),
+  tibble(
+    race = "other",
+    brier = other
+  )
+) |> 
+  ggplot(aes(y = brier, fill = race)) + 
+  geom_boxplot() +
+  labs(title = "Model performance comparison on race") + 
+  scale_fill_manual(values = colormap)
+# other > white > black
+```
+

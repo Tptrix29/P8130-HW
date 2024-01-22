@@ -1,0 +1,272 @@
+---
+title: "Homework 5"
+author: "Pei Tian, pt2632"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+format: pdf
+---
+
+## Problem 1
+
+```{r include = F}
+knitr::opts_chunk$set(message = F, warning = F)
+```
+
+```{r init}
+library(faraway)
+library(tidyverse)
+library(patchwork)
+library(corrplot)
+
+theme_set(
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+)
+
+life_expectency = state.x77 |> as_tibble() |> janitor::clean_names()
+```
+
+R dataset `state.x77` from `library(faraway)` contains information on 50 states from 1970s collected by US Census Bureau. The goal is to predict 'life expectancy' using a combination of remaining variables.
+
+\
+a) Provide descriptive statistics for all variables of interest (continuous and categorical) - no test required.
+
+Variables:
+
+-   `Population:` population estimate as of July 1, 1975
+-   `Income:` per capita income (1974)
+-   `Illiteracy:` illiteracy (1970, percent of population)
+-   `Life Exp:` life expectancy in years (1969--71)
+-   `Murder:` murder and non-negligent manslaughter rate per 100,000 population (1976)
+-   `HS Grad:` percent high-school graduates (1970)
+-   `Frost:` mean number of days with minimum temperature below freezing (1931--1960) in capital or large city
+-   `Area:` land area in square miles
+
+All variables are continuous.
+
+```{r descriptive}
+life_expectency |> summary()
+```
+
+```{r cor1}
+pairs(life_expectency)
+```
+
+```{r cor2}
+corrplot(cor(life_expectency), type = "upper", diag = FALSE)
+
+```
+
+b)  Examine exploratory plots, e.g., scatter plots, histograms, box-plots to get a sense of the data and possible variable transformations. (Be selective! Even if you create 20 plots, you don't want to show them all). If you find a transformation to be necessary or recommended, perform the transformation and use it through the rest of the problem.
+
+```{r desc1}
+create_panel <- function(df, var1, var2) {
+  # Histogram for var1
+  histogram_var1 <- ggplot(df, aes_string(x = var1)) +
+    geom_histogram(bins = 20, fill = "steelblue", color = "steelblue", alpha = .8) +
+    labs(title = paste("Histogram of", var1), x = var1, y = "Count")
+  
+  # Q-Q plot for var1
+  qqplot_var1 <- ggplot(data = df, aes_string(sample = var1)) +
+    geom_qq() +
+    geom_qq_line() +
+    labs(title = paste("Q-Q Plot of", var1), x = "Theoretical Quantiles", y = "Sample Quantiles")
+  
+  # Scatter plot
+  scatter_plot <- ggplot(df, aes_string(x = var1, y = var2)) +
+    geom_point(alpha = .5) +
+    labs(title = paste(var1, "vs", var2),
+         x = var1, y = var2)
+  
+  box_plot = ggplot(df, aes_string(y = var2)) +
+    geom_boxplot(fill = "skyblue") +
+    labs(title = paste("Boxplot of ", var2))
+  
+  
+  # Arrange plots in a grid
+  panel <- gridExtra::grid.arrange(histogram_var1, qqplot_var1, scatter_plot, box_plot, ncol = 2, nrow = 2)
+}
+
+target_var = "life_exp"
+for(v in c("population", "area")){
+  optm = create_panel(life_expectency, v, target_var)
+}
+
+```
+
+After observing the distributions of different variables, I choose to perform logarithm transformation to `population` and `area` variable to make the distribution of them more close to the normal distribution.
+
+```{r hist1}
+hist1 <- 
+  ggplot(life_expectency, aes_string(x = "population")) +
+    geom_histogram(bins = 20, fill = "steelblue", color = "steelblue", alpha = .8) +
+    labs(title = "Before transformation", x = "population", y = "Count")
+hist2 <- 
+  ggplot(life_expectency, aes(x = population |> log1p())) +
+    geom_histogram(bins = 20, fill = "steelblue", color = "steelblue", alpha = .8) +
+    labs(title = "After transformation", x = "log(population)", y = "Count")
+gridExtra::grid.arrange(hist1, hist2, ncol = 2, nrow = 1)
+
+```
+
+```{r hist2}
+hist1 <- 
+  ggplot(life_expectency, aes_string(x = "area")) +
+    geom_histogram(bins = 20, fill = "steelblue", color = "steelblue", alpha = .8) +
+    labs(title = "Before transformation", x = "area", y = "Count")
+hist2 <- 
+  ggplot(life_expectency, aes(x = area |> log1p())) +
+    geom_histogram(bins = 20, fill = "steelblue", color = "steelblue", alpha = .8) +
+    labs(title = "After transformation", x = "log(area)", y = "Count")
+gridExtra::grid.arrange(hist1, hist2, ncol = 2, nrow = 1)
+```
+
+```{r transform}
+life_expectency = life_expectency |>
+  mutate(log_population = log1p(population), 
+         log_area = log1p(area)) |>
+  select(-population, -area)
+
+```
+
+c)  Use automatic procedures to find a 'best subset' of the full model. Present the results and comment on the following:
+
+    Result:
+
+    -   backward stepwise selection: $life\_exp = \beta_0 + \beta_1 * murder + \beta_2 * hs\_grad + \beta_3 * frost + \beta_4 * log(population)$
+
+    -   forward stepwise selection: $life\_exp = \beta_0 + \beta_1 * murder + \beta_2 * hs\_grad + \beta_3 * frost + \beta_4 * log(population)$
+
+    ```{r}
+    mult.fit = lm(life_exp ~ ., data = life_expectency)
+    step(mult.fit, direction = "backward") |> summary()
+    ```
+
+    ```{r}
+    intercept.fit = lm(life_exp ~ 1, data = life_expectency)
+    step(intercept.fit, direction = "forward", scope = formula(mult.fit)) |> summary()
+    ```
+
+-   Do the procedures generate the same model?
+
+    Yes.
+
+-   Are any variables a close call? What was your decision: keep or discard? Provide arguments for your choice. (Note: this question might have more or less relevance depending on the 'subset' you choose).
+
+    When I manually deliver "backward" stepwise selection procedure, I found the `frost` variable is a close call with p-value as 0.043. As for the decision, I finally choose to keep this variable because the model's adjusted r-square will decrease after I remove `frost` from predictors subset.
+
+    ```{r}
+    mult.fit = lm(life_exp ~ ., data = life_expectency)
+    summary(mult.fit)
+    step = update(mult.fit, . ~ . - income)
+    step = update(step, . ~ . - illiteracy)
+    step = update(step, . ~ . - log_area)
+    summary(step)
+    ```
+
+-   Is there any association between 'Illiteracy' and 'HS graduation rate'? Does your 'subset' contain both?
+
+    From the correlation heatmap, we can see that 'illteracy' and 'HS graduation rate' are negatively related (correlation coefficient = -0.65)
+
+    All models don't contain both of them.
+
+d)  Use criterion-based procedures to guide your selection of the 'best subset'. Summarize your results (tabular or graphical).
+
+    ```{r}
+    X = life_expectency |> select(-life_exp)
+    y = life_expectency |> pull(life_exp)
+
+    leaps::leaps(
+      x = X, 
+      y = y,
+      nbest = 2,
+      method = "Cp"
+    )
+    ```
+
+    ```{r}
+    leaps::leaps(
+      x = X, 
+      y = y,
+      nbest = 2,
+      method = "adjr2"
+    )
+    ```
+
+    ```{r}
+    result = leaps::regsubsets(
+      x = X, 
+      y = y,
+      nbest = 1
+    ) |> summary()
+    gridExtra::grid.arrange(
+      ggplot(aes(x = 1:length(result$cp), y = result$cp), data = NULL) + geom_point() + geom_line(),
+      ggplot(aes(x = 1:length(result$adjr2), y = result$adjr2), data = NULL) + geom_point() + geom_line(), ncol = 2
+    )
+    ```
+
+    ```{r}
+    colnames(result$which)[result$which[4,]]
+    ```
+
+    According to the Cp's criterion and adjusted R-square, the final model is $life\_exp = \beta_0 + \beta_1 * murder + \beta_2 * hs\_grad + \beta_3 * frost + \beta_4 * log(population)$, which is the same as model selected by procedure-based procedure.
+
+e)  Use the LASSO method to perform variable selection. Make sure you choose the 'best lambda' to use and show how you determined this.
+
+    ```{r}
+    cv.lasso = glmnet::cv.glmnet(x = X |> as.matrix(), y = y, alpha = 1)
+    plot(cv.lasso)
+    ```
+
+    ```{r}
+    lasso = glmnet::glmnet(X |> as.matrix(), y, alpha = 1, lambda = cv.lasso$lambda.min)
+    coef(lasso)
+    ```
+
+    Given the result of lasso model with optimized $\lambda$ parameter, the final model is $life\_exp = \beta_0 + \beta_1 * murder + \beta_2 * hs\_grad + \beta_3 * frost + \beta_4 * log(population) + \beta_5 * log(area)$
+
+f)  Compare the 'subsets' from parts c, d, and e and recommend a 'final' model. Using this 'final' model do the following:
+
+-   Check the model assumptions.
+
+    ```{r}
+    f1 = formula(life_exp ~ murder + frost + hs_grad + log_population)
+    f2 = formula(life_exp ~ murder + frost + hs_grad + log_population + log_area)
+    model1 = lm(f1, data = life_expectency)
+    model2 = lm(f2, data = life_expectency)
+    plot(model1)
+    ```
+
+    ```{r}
+    plot(model2)
+    ```
+
+    From the diagnostic plots, I conclude that both models satisify the assumptions related to the residuals. Given the residual vs fitted value plots consist of points bounce around 0, so the assumption about homoscedasticity is met. In addition, the points QQ-plot is nearly fitting to a line, so the assumption about normality is met. Finally, the
+
+-   Test the model predictive ability using a 10-fold cross-validation.
+
+    ```{r}
+    mse = function(train, test, formula, slot = "life_exp"){
+      model = lm(formula, data = train)
+      true = test[, slot]
+      pred = predict(model, data = test)
+      sum((pred - true)^2) / length(true)
+    }
+    cross_data = modelr::crossv_kfold(life_expectency, k = 10) |>
+      mutate(train = map(train, as_tibble), 
+             test = map(test, as_tibble), 
+             result1 = map2(train, test, mse, formula = f1), 
+             result2 = map2(train, test, mse, formula = f2)) |> 
+      unnest(result1, result2)
+    ```
+
+    From the cross-validation result, 2 models have nearly same performance according to the evaluation result on test datasets, given close mean MSE of different model.
+
+    -   Mean MSE for model selected by stepwise-based/criterion-based procedure: `r mean(cross_data$result1)`
+
+    <!-- -->
+
+    -   Mean MSE for model selected by lasso: `r mean(cross_data$result2)`
+
+g)  In a paragraph, summarize your findings to address the primary question posed by the investigator (that has limited statistical knowledge).
+
+    For the goal of predicting `life_exp` using a combination of variables, I contend that `life_exp` could be predicted by variables including `population`, `hs_grad`, `murder` and `frost`, given its good performance in validation of linear model with them as predictors. Also, the criterion and significance level also indicate this linear model is the most reasonable and satisfying one among all linear models.

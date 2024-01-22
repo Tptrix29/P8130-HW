@@ -1,2 +1,2 @@
-# P8130-HW
-Homework for Biostatistical Method I course
+# BM1-Final
+Final Project for Biostatistical Method I

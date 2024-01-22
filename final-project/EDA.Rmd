@@ -1,0 +1,199 @@
+---
+title: "survival EDA"
+author: "Sitian Zhou, Shuchen Dong"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(survival)
+library(corrplot)
+library(rcompanion)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(RColorBrewer)
+library(gridExtra)
+library(lsr)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	message = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+
+knitr::opts_chunk$set(message = F, warning = F)
+
+theme_set(
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(family = "Helvetica")) + 
+  theme(legend.position = "right"))
+```
+
+
+```{r import data}
+data = 
+  read_csv(
+    "data/Project_2_data.csv") |>
+  janitor::clean_names() |>
+  mutate(status = case_match(status, "Alive" ~ 0, "Dead" ~ 1),
+         grade = case_match(grade, "1" ~ 1, "2" ~ 2, "3" ~ 3,
+                            "anaplastic; Grade IV" ~ 4),
+         grade = as.factor(grade)) |>
+  mutate_if(is.character, as.factor)
+```
+
+# data summary
+
+```{r data summary}
+data |> 
+  select(age : status) |> 
+  gtsummary::tbl_summary() |> 
+  gtsummary::bold_labels() |> 
+  gtsummary::italicize_levels()
+```
+
+# correlation
+
+## categorical variables
+
+```{r cat corr}
+# corr b/t categorical variables 
+## using cramer V
+
+cat_data <-
+  data |> 
+  select(race, marital_status, t_stage, n_stage, x6th_stage, differentiate, grade, a_stage, estrogen_status, progesterone_status)
+
+cat_cor <- data.frame(matrix(ncol = 3, nrow = 10^2))
+colnames(cat_cor) <- c('var1', 'var2', 'cor')
+
+pos = 1
+for (i in 1:ncol(cat_data)) {
+  var1 = colnames(cat_data[c(i)])
+  dat1 = cat_data[c(i)]
+  for (j in 1:ncol(cat_data)) {
+    var2 = colnames(cat_data[c(j)])
+    dat2 = cat_data[c(j)]
+    cor = cramerV(factor(as.matrix(dat1)), factor(as.matrix(dat2)))
+    cat_cor$var1[pos] = var1
+    cat_cor$var2[pos] = var2
+    cat_cor$cor[pos] = cor
+    pos = pos + 1
+  }
+}
+
+cat_cor_res = 
+  cat_cor |> 
+  pivot_wider(
+    names_from = var2,
+    values_from = cor
+  ) |> 
+  column_to_rownames(var = "var1")
+
+
+corrplot(as.matrix(cat_cor_res), type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+```
+
+## numeric - binary categocial variables
+
+```{r num+bin corr}
+# corr b/t numeric and categorical variables
+# point biserial corr
+data_num =
+  data |> 
+  select(age, tumor_size, regional_node_examined, reginol_node_positive, survival_months, a_stage,
+         estrogen_status, progesterone_status, status) |> 
+  mutate(
+    a_stage = recode(a_stage, "Regional" = 0, "Distant" = 1),
+    estrogen_status = recode(estrogen_status, "Positive" = 1, "Negative" = 0),
+    progesterone_status = recode(progesterone_status, "Positive" = 1, "Negative" = 0)
+  )
+
+num_cat_cor_res = cor(data_num)
+corrplot(num_cat_cor_res, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+```
+
+## numeric - categorical (>2 levels) variables
+
+```{r eta sqr}
+# create empty summary table
+eta_sqr_sum <- data.frame(matrix(ncol = 3, nrow = 5*7))
+colnames(eta_sqr_sum) <- c('var1', 'var2', 'eta_sqr')
+# numeric variables
+anova_num <-
+  data |> 
+  select(age, tumor_size, regional_node_examined, reginol_node_positive, survival_months)
+# categorical variables w/ more than 2 levels
+anova_cat <-
+  data |> 
+  select(race, marital_status, t_stage, n_stage, x6th_stage, differentiate, grade)
+# loop over the datasets
+pos = 1
+for (i in 1:ncol(anova_num)) {
+  var1 = colnames(anova_num[c(i)])
+  dat1 = anova_num[c(i)]
+  for (j in 1:ncol(anova_cat)) {
+    var2 = colnames(anova_cat[c(j)])
+    dat2 = anova_cat[c(j)]
+    eta2 = aov(as.matrix(dat1) ~ as.matrix(dat2)) |> 
+      etaSquared() |> 
+      as.data.frame() |> 
+      pull(eta.sq)
+    eta_sqr_sum$var1[pos] = var1
+    eta_sqr_sum$var2[pos] = var2
+    eta_sqr_sum$eta_sqr[pos] = eta2
+    pos = pos + 1
+  }
+}
+```
+
+
+```{r eta sqr plot}
+# plot
+eta_sqr_sum |> 
+  ggplot(aes(x = var2, y = var1, color= eta_sqr)) + 
+  geom_tile(col="white", fill="white") +
+  geom_point(aes(size = eta_sqr), shape=16) +
+  labs(x = "", y = "", col = "Eta Squared", title="Eta squared for variables") +
+  scale_color_gradient2(low="#D6604D",high="#1B5B9D",mid="white",midpoint = 0.5, limits=c(0,1))+
+  scale_y_discrete(expand = c(0,0),labels=c("age", "reginol_node_positive", "regional_node_examined", "survival_months", "tumor_size")) +
+  scale_x_discrete(expand = c(0,0), labels = c("differentiate", "grade", "marital_status", "n_stage", "race", "t_stage", "x6th_stage")) +
+  scale_size(range=c(1,8), guide = NULL)+
+  theme(axis.line = element_line(colour = "black", 
+                      size = 1, linetype = "solid"),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+```
+
+**interpret values for Eta squared**
+
+0.01: Small effect size
+
+0.06: Medium effect size
+
+0.14 or higher: Large effect size
+
+
+# Transformations
+
+```{r transformation}
+# log transformation works
+data |> 
+  ggplot(aes(x = tumor_size)) + geom_histogram(fill = "#3679D8") +
+  labs(title = "Histogram of tumor_size")
+data |> 
+  ggplot(aes(x = log(tumor_size))) + geom_histogram(fill = "#3679D8") +
+  labs(title = "Histogram of log(tumor_size)")
+```
+
+**consider using log(tumor_size) instead**
+

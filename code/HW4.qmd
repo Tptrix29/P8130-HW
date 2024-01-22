@@ -1,0 +1,303 @@
+---
+title: "Homework 4"
+author: "Pei Tian, pt2632"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+format: pdf
+---
+
+```{r setup, include = F}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+library(BSDA)
+library(broom)
+library(tidyverse)
+
+theme_set(theme_bw())
+```
+
+# Problem 1 (10 points)
+
+A new device has been developed which allows patients to evaluate their blood sugar levels.\
+The most widely device currently on the market yields widely variable results. The new device is evaluated by 25 patients having nearly the same distribution of blood sugar levels yielding the following data:
+
+125 123 117 123 115 112 128 118 124 111 116 109 125 120 113 123 112 118 121 118 122 115 105 118 131
+
+a)  Is there significant ($\alpha = 0.05$) evidence that median blood sugar readings was less than 120 in the population from which the 25 patients were selected?\
+    Use the sign test and report the test statistic and p-value.
+
+```{r}
+p1_data = c(
+  125, 123, 117, 123, 115, 112, 128, 118, 124, 111, 
+  116, 109, 125, 120, 113, 123, 112, 118, 121, 118, 
+  122, 115, 105, 118, 131
+)
+
+alter_val = 120
+n_star = sum(p1_data != alter_val)
+C = sum(p1_data > alter_val)
+# stats = (C - n_star / 2 + 0.5) / (sqrt(n_star / 4))
+test_result = SIGN.test(p1_data, md = 120, alternative = "less", conf.level = 0.95)
+```
+
+Let $\Delta$ be the median of the blood sugar reading distribution of patients.
+
+Hypothesis: $H_0: \Delta = 120, H_1 = \Delta < 120$
+
+Total number of non-zero difference: $n^\star$= `r n_star`
+
+Number of positive difference: $C$ = `r C`
+
+Normal Approximation: $n^\star p(1-p) = n^\star/4$ = `r n_star/4` \> 5
+
+Test Statistic: $stats = \frac{C - \frac{n^\star}{2} + \frac{1}{2}}{\sqrt{\frac{n^\star}{4}}} =$ `r pnorm(test_result$p.value)`
+
+p-value = `r test_result$p.value` > 0.05
+
+So we fail to reject the $H_0$, which means that median blood sugar readings equals to 120 in 0.05 significance level.
+
+b)  Is there significant ($\alpha = 0.05$) evidence that median blood sugar readings was less than 120 in the population from which the 25 patients were selected?\
+    Use the Wilcoxon signed-rank test and report the test statistic and p-value.
+
+```{r warning=F}
+test_result = wilcox.test(p1_data, mu = 120, 
+                          alternative = "less", 
+                          conf.level = 0.95, 
+                          correct = T)
+```
+
+Hypothesis: $H_0: \Delta = 120, H_1 = \Delta < 120$
+
+Let $T_+$ be the sum of the ranks for positive difference,
+
+Statistic: (ties) $T = \frac{|T_+ - \frac{n^\star(n^\star+1)}{4}| - \frac{1}{2}}{\frac{n^\star(n^\star+1)(2n^\star+1)}{6} - \frac{\sum_{i=1}^g(t_i^3 - t_i)}{48}}$ = `r qnorm(test_result$p.value)`
+
+p-value = `r test_result$p.value` > 0.05
+
+So we fail to reject the $H_0$, which means that median blood sugar readings equals to 120 in 0.05 significance level.
+
+# Problem 2 (15 points)
+
+Human brains have a large frontal cortex with excessive metabolic demands compared with the brains of other primates. However, the human brain is also three or more times the size of the brains of other primates. Is it possible that the metabolic demands of the human frontal cortex are just an expected consequence of greater brain size? A data file containing the measurements of glia-neuron ratio (an indirect measure of the metabolic requirements of brain neurons) and the log-transformed brain mass in nonhuman primates was provided to you along with the following graph.
+
+```{r}
+#| echo: false
+#| message: false
+#| fig.width: 2.5
+#| fig.height: 2
+#| fig.align: "center"
+#| fig.pos: "h"
+
+library(tidyverse)
+
+brain <- readxl::read_xlsx("./data/Brain.xlsx")
+
+brain %>% 
+  slice(-1) %>% 
+  ggplot(aes(x = `Ln Brain mass`, y = `Glia-neuron ratio`)) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  geom_point(color = "red") +
+  geom_point(aes(x = brain$`Ln Brain mass`[1], 
+                 y = brain$`Glia-neuron ratio`[1])) +
+  guides(color = "none") +
+  theme_classic()
+```
+
+a)  Fit a regression model for the non-human data using $\ln{(\textrm{brain mass})}$ as a predictor. (Hint: Humans are "homo sapiens".)
+
+```{r, message=FALSE}
+brain <- readxl::read_xlsx("./data/Brain.xlsx")
+
+human = "Homo sapiens"
+brain = brain |> janitor::clean_names()
+non_human_fit = brain |>
+  filter(species != human) |>
+  lm(glia_neuron_ratio ~ ln_brain_mass, data = _)
+modelr::add_predictions(brain, non_human_fit) |>
+  ggplot(aes(x = ln_brain_mass, y = glia_neuron_ratio)) +
+  geom_point(color = "steelblue") +
+  geom_smooth(method = "lm", se = T, 
+              color = "pink", lwd = 1) +
+  geom_point(data = filter(brain, species == human),
+             aes(ln_brain_mass, glia_neuron_ratio), color = "red") + 
+  labs(
+    title = "Linear model fitting on non-human species") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.position = "none")
+```
+
+b)  Using the nonhuman primate relationship, what is the predicted glia-neuron ratio for humans, given their brain mass?
+
+```{r}
+pred_input = brain |> filter(species == human)
+pred_ratio = predict(non_human_fit, pred_input)
+```
+The predicted glia-neuron ratio for humans is `r pred_ratio`.
+
+c)  Determine the most plausible range of values for the prediction. Which is more relevant for your prediction of human glia-neuron ratio: an interval for the predicted mean glia-neuron ratio at the given brain mass, or an interval for the prediction of a single new observation?
+
+```{r}
+mean_interval = predict(non_human_fit, pred_input, 
+                        interval = "conf", level = 0.95)
+new_interval = predict(non_human_fit, pred_input, 
+                       interval = "pred", level = 0.95)
+```
+Interval for the predicted mean glia-neuron ratio at the given brain mass: (`r mean_interval[2]`, `r mean_interval[3]`).
+
+Interval for the prediction of a single new observation: (`r new_interval[2]`, `r new_interval[3]`)
+
+I think the later interval is more plausible, because the data of human is not included in the training data, which means it is new data for the fitted linear model.
+
+d)  Construct the 95% interval chosen in part (c). On the basis of your result, does the human brain have an excessive glia-neuron ratio for its mass compared with other primates?
+
+Given that the glia-neuron ratio of human equals to `r brain |> filter(species == human) |> pull(glia_neuron_ratio)`, which lies in the chosen confidence interval, so the human brain doesn't have an excessive glia-neuron ratio for its mass compared with other primates in 0.05 significance level.
+
+e)  Considering the position of the human data point relative to those data used to generate the regression line (see graph above), what additional caution is warranted?
+
+From the graph above, the human data point is located relatively far away from other data point, which indicates that it maybe an outlier in the dataset and the prediction result maybe unreliable. 
+
+
+# Problem 3 (25 points)
+
+For this problem, you will be using data `HeartDisease.csv`. The investigator is mainly interested if there is an association between 'total cost' (in dollars) of patients diagnosed with heart disease and the 'number of emergency room (ER) visits'. Further, the model will need to be adjusted for other factors, including 'age', 'gender', 'number of complications' that arose during treatment, and 'duration of treatment condition'.
+
+a)  Provide a short description of the data set: what is the main outcome, main predictor and other important covariates. Also, generate appropriate descriptive statistics for all variables of interest (continuous and categorical) -- no test required.
+
+```{r, message=FALSE}
+heart = read_csv("./data/HeartDisease.csv") |> 
+  janitor::clean_names()
+```
+
+Main outcome: total cost
+
+Main predictor: number of emergency room (ER) visits
+
+Other important covariates: age, gender, number of complications, duration of treatment condition
+
+Descriptive statistics for all variables of interest (continuous and categorical): 
+```{r}
+# continuous
+heart |>
+  select(totalcost, e_rvisits, age, complications, duration) |>
+  summary()
+```
+
+```{r}
+# categorical
+heart |> 
+  group_by(gender) |>
+  summarise(count = n()) |>
+  knitr::kable()
+```
+
+b)  Investigate the shape of the distribution for variable `totalcost` and try different transformations, if needed.
+
+```{r}
+heart |>
+  ggplot(aes(x = totalcost)) +
+  geom_histogram(bins = 40) + 
+  labs(title = "Histogram of `totalcost`") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Distribution description: 
+The distribution of `totalcost` is obviously right-skewed.
+
+Use box-cox plot to determine the transformation power:
+```{r}
+fit = heart |>
+  filter(totalcost > 0) |>
+  lm(totalcost ~ age, data = _)
+MASS::boxcox(fit, lambda = seq(-3, 3, by = 0.25))
+```
+
+```{r}
+heart |>
+  ggplot(aes(x = log1p(totalcost))) +
+  geom_histogram(bins = 40) + 
+  labs(title = "Histogram of log1p(`totalcost`)") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Given the result of `boxcox` plot, I tried to use logarithmic transformation on this variable. (Max likelihood achieved when $\lambda = 0$)
+After logarithmic transformation, the distribution of transformed `totalcost` is approximately symmetric and subject to normal distribution.
+
+c)  Create a new variable called `comp_bin` by dichotomizing 'complications': 0 if no complications, and 1 otherwise.
+
+```{r}
+heart = heart |>
+  mutate(comp_bin = factor(if_else(complications == 0, 0, 1)))
+```
+
+d)  Based on your decision in part (b), fit a simple linear regression (SLR) between the original or transformed `totalcost` and predictor `ERvisits`. 
+This includes a scatterplot and results of the regression, with appropriate comments on significance and interpretation of the slope.
+
+```{r}
+heart |>
+  mutate(log_totalcost = log1p(totalcost)) |> 
+  ggplot(aes(x = e_rvisits, y = log_totalcost)) +
+  geom_point(color = "steelblue") +
+  geom_smooth(method = "lm", se = T, 
+              color = "pink", lwd = 1) +
+  labs(
+    x = "ER visits", y = "log(total cost)", 
+    title = "log1p(totalcost) - ERvisits") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.position = "none")
+  
+```
+```{r}
+slr = heart |>
+  mutate(log_totalcost = log1p(totalcost)) |> 
+  lm(log_totalcost ~ e_rvisits, data = _)
+summary(slr)
+```
+
+  The linear regression model indicates a significant relationship between log-transformed `total cost` and the number of emergency room visits (`ERvisits`). The positive coefficient (0.22529) suggests that, on average, each additional ER visit is associated with 0.225 increase in total cost.
+
+e)  Fit a multiple linear regression (MLR) with `comp_bin` and `ERvisits` as predictors.
+
+    i)  Test if `comp_bin` is an effect modifier of the relationship between `totalcost` and `ERvisits`. Comment.
+
+```{r}
+# Interaction effect
+heart |> 
+  mutate(log_totalcost = log1p(totalcost)) |>
+  lm(log_totalcost ~ e_rvisits * comp_bin, data = _) |>
+  summary()
+```
+    
+  From the result, the coefficient of combination term is not significant, indicating that `comp_bin` is not an effect modifier.
+
+    ii) Test if `comp_bin` is a confounder of the relationship between `totalcost` and `ERvisits`. Comment.
+```{r}
+heart |> 
+  mutate(log_totalcost = log1p(totalcost)) |>
+  lm(log_totalcost ~ e_rvisits + comp_bin, data = _) |>
+  summary()
+```
+```{r}
+heart |> 
+  mutate(log_totalcost = log1p(totalcost)) |>
+  lm(log_totalcost ~ e_rvisits, data = _) |>
+  summary()
+```
+    
+  From the result, the coefficient of `ERvisit` term decreases after adding `comp_bin` as predictor, indicating that `comp_bin` is a potential confounder.
+
+    iii) Decide if `comp_bin` should be included along with `ERvisits`. Why or why not?
+
+  Given that `comp_bin` is confounder, it should be included.
+
+f)  Use your choice of model in part (e) and add additional covariates (age, gender, and duration of treatment).
+
+    i)  Fit a MLR, show the regression results and comment.
+```{r}
+heart |> 
+  mutate(log_totalcost = log1p(totalcost)) |>
+  lm(log_totalcost ~ e_rvisits + age + gender + duration + comp_bin, data = _) |>
+  summary()
+```
+    
+  The model exhibits high significance, with key predictors `ERvisit`,  `duration` and `comp_bin` significantly influencing the outcome variable. Predictor `age` still contribute meaningfully to the model with less impact, while `gender` is with non-significant effect to outcome.
+
+  ii) Compare the SLR and MLR models. Which model would you use to address the investigator's objective and why?
+  
+  I will choose to use MLR model. Because MLR excels in capturing complex relationships between multiple predictors and a response variable, while MLR is more precise given the model residual comparison.
